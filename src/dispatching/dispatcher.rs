@@ -20,8 +20,9 @@ use futures::{stream::FuturesUnordered, Future, StreamExt};
 use teloxide_core::{
     requests::Requester,
     types::{
-        AllowedUpdate, CallbackQuery, ChatMemberUpdated, ChosenInlineResult, InlineQuery, Message,
-        Poll, PollAnswer, PreCheckoutQuery, ShippingQuery, Update, UpdateKind,
+        AllowedUpdate, CallbackQuery, ChatJoinRequest, ChatMemberUpdated, ChosenInlineResult,
+        InlineQuery, Message, Poll, PollAnswer, PreCheckoutQuery, ShippingQuery, Update,
+        UpdateKind,
     },
 };
 use tokio::{
@@ -52,6 +53,7 @@ pub struct Dispatcher<R> {
     poll_answers_queue: Tx<R, PollAnswer>,
     my_chat_members_queue: Tx<R, ChatMemberUpdated>,
     chat_members_queue: Tx<R, ChatMemberUpdated>,
+    chat_join_requests_queue: Tx<R, ChatJoinRequest>,
 
     running_handlers: FuturesUnordered<JoinHandle<()>>,
 
@@ -81,6 +83,7 @@ where
             poll_answers_queue: None,
             my_chat_members_queue: None,
             chat_members_queue: None,
+            chat_join_requests_queue: None,
             running_handlers: FuturesUnordered::new(),
             state: <_>::default(),
             shutdown_notify_back: <_>::default(),
@@ -245,6 +248,15 @@ where
         H: DispatcherHandler<R, ChatMemberUpdated> + 'static + Send,
     {
         self.chat_members_queue = self.new_tx(h);
+        self
+    }
+
+    #[must_use]
+    pub fn chat_join_requests_handler<H>(mut self, h: H) -> Self
+    where
+        H: DispatcherHandler<R, ChatJoinRequest> + 'static + Send,
+    {
+        self.chat_join_requests_queue = self.new_tx(h);
         self
     }
 
@@ -444,7 +456,13 @@ where
                     &self.requester,
                     &self.chat_members_queue,
                     chat_member_updated,
-                    "UpdateKind::MyChatMember",
+                    "UpdateKind::ChatMember",
+                ),
+                UpdateKind::ChatJoinRequest(chat_join_request) => send(
+                    &self.requester,
+                    &self.chat_join_requests_queue,
+                    chat_join_request,
+                    "UpdateKind::ChatJoinRequest",
                 ),
             }
         }
@@ -522,6 +540,7 @@ where
         self.poll_answers_queue.take();
         self.my_chat_members_queue.take();
         self.chat_members_queue.take();
+        self.chat_join_requests_queue.take();
 
         // Wait untill all handlers finish
         self.running_handlers.by_ref().for_each(|_| async {}).await;
